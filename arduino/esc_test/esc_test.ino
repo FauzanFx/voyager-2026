@@ -10,9 +10,9 @@ void setup() {
   esckanan.attach(ESC_KANAN_PIN);
   esckiri.attach(ESC_KIRI_PIN);
     // Jalan
-  esckanan.writeMicroseconds(1700);
-  esckiri.writeMicroseconds(1700);
-  delay(5000);
+  esckanan.writeMicroseconds(1200);
+  esckiri.writeMicroseconds(1200);
+  delay(10000);
 }
 
 void loop() {

@@ -77,7 +77,7 @@ void bacaPH() {
   unsigned long int avgval;
   for (int i = 0; i < 10; i++) {
     buffer_arr[i] = analogRead(PH_PIN);
-    delayMicroseconds(100); // Sampling sangat cepat agar tidak lag
+    delayMicroseconds(100);
   }
   // Sorting array
   for (int i = 0; i < 9; i++) {
@@ -163,7 +163,6 @@ void loop() {
       int pwmKananRaw = 1500 + (rightMix * SPEED_MULTIPLIER);
       
       // --- MIRRORING PROPELLER KANAN (CCW) ---
-      // Dibalik terhadap titik netral (1500)
       targetPwmKanan = (2 * 1500) - pwmKananRaw;
 
       // Pastikan tetap berada di rentang batas aman ESC
@@ -209,12 +208,16 @@ void loop() {
     float jarakBelakang = bacaJarak(TRIG_BELAKANG, ECHO_BELAKANG);
     float penuhDepan = hitungPersenPenuh(jarakDepan, TINGGI_TONG_DEPAN);
     float penuhBelakang = hitungPersenPenuh(jarakBelakang, TINGGI_TONG_BELAKANG);
+    float totalKepenuhan = (penuhDepan + penuhBelakang) / 2.0;
 
     Serial.println("\n========================================");
     Serial.print("Jarak Depan   : "); Serial.print(jarakDepan); Serial.println(" cm");
     Serial.print("Status Depan  : "); Serial.println(statusTong(penuhDepan));
+    Serial.print("Jarak Belakang: "); Serial.print(jarakBelakang); Serial.println(" cm");
+    Serial.print("Status Belakang: "); Serial.println(statusTong(penuhBelakang));
     
-    // Print dengan satuan yang sudah dikalibrasi
+    Serial.print("TOTAL KEPENUHAN : "); Serial.print(totalKepenuhan); Serial.println(" %");
+    
     Serial.print("Nilai pH      : "); Serial.println(ph_act, 2);
     Serial.print("Turbidity NTU : "); Serial.println(turbidity_ntu, 1);
     
