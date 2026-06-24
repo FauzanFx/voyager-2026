@@ -23,6 +23,14 @@ Servo thrusterKanan;
 const float TINGGI_TONG_DEPAN = 80.0;      // cm
 const float TINGGI_TONG_BELAKANG = 80.0;   // cm
 
+// --- Variabel pH ---
+float calibration_value = 15.7;
+int buffer_arr[10], temp;
+float ph_act;
+
+// --- Variabel Turbidity ---
+float turbidity_ntu = 0;
+
 // ================= VARIABEL THRUSTER =================
 int currentPwmKiri = 1500;
 int targetPwmKiri  = 1500;
@@ -33,15 +41,13 @@ int targetPwmKanan  = 1500;
 float x = 0.0; // Steering
 float y = 0.0; // Throttle
 
-// Batas perkalian PWM (Jika 1.0 = 500, maka rentang menjadi 1000 - 2000)
-// Gunakan 250 untuk testing awal agar motor tidak terlalu agresif (Max 1250 - 1750)
 const int SPEED_MULTIPLIER = 500; 
 
 // ================= TIMER =================
 unsigned long waktuPrintTerakhir = 0; 
 unsigned long waktuRampingTerakhir = 0; 
 
-// ================= FUNGSI SENSOR =================
+// ================= FUNGSI SENSOR ULTRASONIK =================
 float bacaJarak(int trigPin, int echoPin) {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
@@ -66,19 +72,60 @@ String statusTong(float persen) {
   return "PENUH";
 }
 
+// ================= FUNGSI SENSOR KUALITAS AIR =================
+void bacaPH() {
+  unsigned long int avgval;
+  for (int i = 0; i < 10; i++) {
+    buffer_arr[i] = analogRead(PH_PIN);
+    delayMicroseconds(100); // Sampling sangat cepat agar tidak lag
+  }
+  // Sorting array
+  for (int i = 0; i < 9; i++) {
+    for (int j = i + 1; j < 10; j++) {
+      if (buffer_arr[i] > buffer_arr[j]) {
+        temp = buffer_arr[i];
+        buffer_arr[i] = buffer_arr[j];
+        buffer_arr[j] = temp;
+      }
+    }
+  }
+  // Ambil rata-rata 6 nilai tengah (buang 2 terendah, 2 tertinggi)
+  avgval = 0;
+  for (int i = 2; i < 8; i++) avgval += buffer_arr[i];
+  float volt_ph = (float)avgval * ((5.0 / 1023.0) / 6.0);
+  ph_act = -7.50 * volt_ph + calibration_value;
+}
+
+float bacaTurbidity() {
+  int sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += analogRead(TURBIDITY_PIN);
+    delayMicroseconds(100);
+  }
+  float avg = sum / 10.0;
+  float volt = avg * (5.0 / 1023.0);
+  float ntu = 0;
+  
+  if (volt < 2.5) {
+    ntu = 3000;
+  } else {
+    ntu = -1120.4 * sq(volt) + 5742.3 * volt - 4352.9;
+    if (ntu < 0) ntu = 0;
+  }
+  return ntu;
+}
+
 // ================= SETUP =================
 void setup() {
-  Serial.begin(115200);  // Komunikasi dengan Raspi
-  Serial3.begin(9600);   // Modul GPS
+  Serial.begin(115200);  
+  Serial3.begin(9600);   
 
-  // Inisialisasi ESC
   thrusterKiri.attach(PWM_ESC_1);
   thrusterKanan.attach(PWM_ESC_2);
   
-  // Arming Seaking V4 
   thrusterKiri.writeMicroseconds(1500);
   thrusterKanan.writeMicroseconds(1500);
-  delay(4000); // Tunggu kalibrasi ESC
+  delay(4000); 
 
   pinMode(TRIG_DEPAN, OUTPUT);
   pinMode(ECHO_DEPAN, INPUT);
@@ -102,23 +149,26 @@ void loop() {
     int commaIndex = dataMasuk.indexOf(',');
 
     if (commaIndex > 0) {
-      // Parsing nilai X dan Y (-1.0 s.d 1.0)
       x = dataMasuk.substring(0, commaIndex).toFloat();
       y = dataMasuk.substring(commaIndex + 1).toFloat();
 
-      x = constrain(x, -1.0, 1.0);
-      y = constrain(y, -1.0, 1.0);
-
       // --- DIFFERENTIAL DRIVE MIXING ---
-      float leftMix  = y + x;
-      float rightMix = y - x;
+      float leftMix  = constrain(y + x, -1.0, 1.0);
+      float rightMix = constrain(y - x, -1.0, 1.0);
 
-      leftMix  = constrain(leftMix, -1.0, 1.0);
-      rightMix = constrain(rightMix, -1.0, 1.0);
+      // Hitung Target PWM Kiri (Standar)
+      targetPwmKiri = 1500 + (leftMix * SPEED_MULTIPLIER);
+      
+      // Hitung Target PWM Kanan RAW
+      int pwmKananRaw = 1500 + (rightMix * SPEED_MULTIPLIER);
+      
+      // --- MIRRORING PROPELLER KANAN (CCW) ---
+      // Dibalik terhadap titik netral (1500)
+      targetPwmKanan = (2 * 1500) - pwmKananRaw;
 
-      // Konversi ke Target PWM (1500 +/- Multiplier)
-      targetPwmKiri  = 1500 + (leftMix * SPEED_MULTIPLIER);
-      targetPwmKanan = 1500 + (rightMix * SPEED_MULTIPLIER);
+      // Pastikan tetap berada di rentang batas aman ESC
+      targetPwmKiri  = constrain(targetPwmKiri, 1000, 2000);
+      targetPwmKanan = constrain(targetPwmKanan, 1000, 2000);
     }
   }
 
@@ -126,7 +176,6 @@ void loop() {
   if (millis() - waktuRampingTerakhir >= 50) {
     waktuRampingTerakhir = millis();
 
-    // Ramping Thruster Kiri
     if (currentPwmKiri < targetPwmKiri) {
       currentPwmKiri += 10;
       if (currentPwmKiri > targetPwmKiri) currentPwmKiri = targetPwmKiri;
@@ -135,7 +184,6 @@ void loop() {
       if (currentPwmKiri < targetPwmKiri) currentPwmKiri = targetPwmKiri;
     }
 
-    // Ramping Thruster Kanan
     if (currentPwmKanan < targetPwmKanan) {
       currentPwmKanan += 10;
       if (currentPwmKanan > targetPwmKanan) currentPwmKanan = targetPwmKanan;
@@ -144,7 +192,6 @@ void loop() {
       if (currentPwmKanan < targetPwmKanan) currentPwmKanan = targetPwmKanan;
     }
 
-    // Terapkan PWM ke ESC
     thrusterKiri.writeMicroseconds(currentPwmKiri);
     thrusterKanan.writeMicroseconds(currentPwmKanan);
   }
@@ -153,32 +200,29 @@ void loop() {
   if (millis() - waktuPrintTerakhir >= 2000) {
     waktuPrintTerakhir = millis(); 
 
-    // Baca Sensor
+    // Update data kualitas air
+    bacaPH();
+    turbidity_ntu = bacaTurbidity();
+
+    // Baca Jarak
     float jarakDepan = bacaJarak(TRIG_DEPAN, ECHO_DEPAN);
     float jarakBelakang = bacaJarak(TRIG_BELAKANG, ECHO_BELAKANG);
     float penuhDepan = hitungPersenPenuh(jarakDepan, TINGGI_TONG_DEPAN);
     float penuhBelakang = hitungPersenPenuh(jarakBelakang, TINGGI_TONG_BELAKANG);
-    float totalKepenuhan = (penuhDepan + penuhBelakang) / 2.0;
 
-    int phADC = analogRead(PH_PIN);
-    float phValue = 3.5 * (phADC * (5.0 / 1023.0));
-    
-    int turbADC = analogRead(TURBIDITY_PIN);
-    float turbVoltage = turbADC * (5.0 / 1023.0);
-
-    // Output ke Serial Monitor (atau ditangkap ulang oleh Raspi)
     Serial.println("\n========================================");
     Serial.print("Jarak Depan   : "); Serial.print(jarakDepan); Serial.println(" cm");
     Serial.print("Status Depan  : "); Serial.println(statusTong(penuhDepan));
-    Serial.print("Nilai pH      : "); Serial.println(phValue, 2);
-    Serial.print("Turbidity Volt: "); Serial.println(turbVoltage, 2);
+    
+    // Print dengan satuan yang sudah dikalibrasi
+    Serial.print("Nilai pH      : "); Serial.println(ph_act, 2);
+    Serial.print("Turbidity NTU : "); Serial.println(turbidity_ntu, 1);
     
     Serial.println("----------------------------------------");
     Serial.print("Joystick Input: X="); Serial.print(x, 2); Serial.print(" | Y="); Serial.println(y, 2);
     Serial.print("Target PWM    : L="); Serial.print(targetPwmKiri); Serial.print(" | R="); Serial.println(targetPwmKanan);
     Serial.print("Current PWM   : L="); Serial.print(currentPwmKiri); Serial.print(" | R="); Serial.println(currentPwmKanan);
 
-    // GPS
     if (gps.location.isValid()) {
       Serial.print("Latitude      : "); Serial.println(gps.location.lat(), 6);
       Serial.print("Longitude     : "); Serial.println(gps.location.lng(), 6);
